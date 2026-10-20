@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Calculadora WebAssembly (C)</title>
+    <link rel="icon" href="data:,">
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 480px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f4f6f8;
+            color: #222;
+        }
+        .card {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        }
+        h2 { margin-top: 0; font-size: 1.2rem; }
+        .row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+        input {
+            width: 80px;
+            padding: 8px;
+            font-size: 1rem;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            padding: 8px 16px;
+            background: #0066cc;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        button:hover { background: #0052a3; }
+        .resultado {
+            font-size: 1.1rem;
+            font-weight: bold;
+            color: #0b7a42;
+        }
+        #status { font-weight: bold; margin-bottom: 15px; }
+    </style>
+</head>
+<body>
+    <h1>WebAssembly Interativo</h1>
+    <p id="status">Carregando módulo Wasm...</p>
+
+    <!-- Seção de Soma -->
+    <div class="card">
+        <h2>Operação: Soma em C</h2>
+        <div class="row">
+            <input type="number" id="numA" value="15">
+            <span>+</span>
+            <input type="number" id="numB" value="27">
+            <button id="btnSoma" disabled>Calcular</button>
+        </div>
+        <div class="resultado" id="resSoma">Resultado: -</div>
+    </div>
+
+    <!-- Seção de Fatorial -->
+    <div class="card">
+        <h2>Operação: Fatorial em C</h2>
+        <div class="row">
+            <label for="numFatorial">Número (n):</label>
+            <input type="number" id="numFatorial" value="6" min="0" max="12">
+            <button id="btnFatorial" disabled>Calcular</button>
+        </div>
+        <div class="resultado" id="resFatorial">Resultado: -</div>
+    </div>
+
+    <script>
+        let wasmExports = null;
+
+        async function initWasm() {
+            try {
+                const response = await fetch('math.wasm');
+                const { instance } = await WebAssembly.instantiateStreaming(response);
+                
+                // Armazena as funções exportadas globalmente no script
+                wasmExports = instance.exports;
+
+                // Atualiza a interface liberando os botões
+                document.getElementById('status').innerText = '✅ Wasm carregado e pronto!';
+                document.getElementById('status').style.color = '#0b7a42';
+                document.getElementById('btnSoma').disabled = false;
+                document.getElementById('btnFatorial').disabled = false;
+
+                // Executa o cálculo inicial com os valores padrão dos inputs
+                executarSoma();
+                executarFatorial();
+            } catch (err) {
+                console.error('Falha ao carregar o WebAssembly:', err);
+                document.getElementById('status').innerText = '❌ Erro ao carregar Wasm.';
+                document.getElementById('status').style.color = '#d32f2f';
+            }
+        }
+
+        function executarSoma() {
+            const a = parseInt(document.getElementById('numA').value, 10) || 0;
+            const b = parseInt(document.getElementById('numB').value, 10) || 0;
+            
+            // Chamada direta à função compilada do C
+            const resultado = wasmExports.soma(a, b);
+            document.getElementById('resSoma').innerText = `Resultado: ${resultado}`;
+        }
+
+        function executarFatorial() {
+            const n = parseInt(document.getElementById('numFatorial').value, 10) || 0;
+            
+            // Chamada direta à função recursiva em C
+            const resultado = wasmExports.fatorial(n);
+            document.getElementById('resFatorial').innerText = `Resultado: ${resultado}`;
+        }
+
+        // Listeners de clique e teclado
+        document.getElementById('btnSoma').addEventListener('click', executarSoma);
+        document.getElementById('btnFatorial').addEventListener('click', executarFatorial);
+
+        initWasm();
+    </script>
+</body>
+</html>

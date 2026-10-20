@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Defensor da Terra - Arcade Polished Edition</title>
+    <link rel="icon" href="data:,">
+    <style>
+        body {
+            margin: 0;
+            background: #04050a;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            user-select: none;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 45px rgba(0, 180, 255, 0.32);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid #1a2744;
+        }
+        canvas {
+            display: block;
+            background: radial-gradient(circle at bottom, #091224 0%, #03060f 100%);
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        .instructions {
+            margin-top: 15px;
+            font-size: 0.9rem;
+            color: #8892b0;
+            text-align: center;
+        }
+        kbd {
+            background: #1e293b;
+            padding: 3px 7px;
+            border-radius: 4px;
+            border: 1px solid #334155;
+            color: #38bdf8;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="canvas" width="600" height="700"></canvas>
+    </div>
+
+    <div class="instructions">
+        Controles: <kbd>A</kbd> ou <kbd>←</kbd> (Esquerda) | <kbd>D</kbd> ou <kbd>→</kbd> (Direita) | <kbd>Espaço</kbd> (Disparar) | <kbd>Enter</kbd> (Iniciar)
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+
+        const STATE = { TITLE: 'TITLE', PLAYING: 'PLAYING', GAMEOVER: 'GAMEOVER' };
+        let currentState = STATE.TITLE;
+        let highScore = parseInt(localStorage.getItem('earth_defender_highscore') || '0', 10);
+
+        let particles = [];
+        let thrusterParticles = [];
+        let hitFlashes = [];
+        let floatingTexts = [];
+        let powerups = [];
+        let screenShake = 0;
+
+        const P_PALETTE = { 1: '#00f7ff', 2: '#0077ff', 3: '#ffffff', 4: '#ff9900' };
+        const E_PALETTE = { 1: '#ff0055', 2: '#880033', 3: '#ffff00', 4: '#ff33aa' };
+        const WHITE_PALETTE = { 1: '#ffffff', 2: '#ffffff', 3: '#ffffff', 4: '#ffffff' };
+
+        const PLAYER_SPRITE = [
+            [0,0,0,0,0,3,3,0,0,0,0,0],
+            [0,0,0,0,1,3,3,1,0,0,0,0],
+            [0,0,0,0,1,1,1,1,0,0,0,0],
+            [0,0,0,1,2,1,1,2,1,0,0,0],
+            [0,1,0,1,2,1,1,2,1,0,1,0],
+            [0,1,0,1,2,2,2,2,1,0,1,0],
+            [1,1,1,1,2,2,2,2,1,1,1,1],
+            [1,2,1,2,2,1,1,2,2,1,2,1],
+            [1,2,2,2,1,0,0,1,2,2,2,1],
+            [0,1,1,1,0,0,0,0,1,1,1,0],
+            [0,0,4,4,0,0,0,0,4,4,0,0],
+            [0,0,0,4,0,0,0,0,4,0,0,0]
+        ];
+
+        const ENEMY_SPRITE = [
+            [1,0,0,0,0,0,0,0,0,0,0,1],
+            [1,1,0,0,0,0,0,0,0,0,1,1],
+            [1,2,1,0,0,1,1,0,0,1,2,1],
+            [0,1,2,1,1,2,2,1,1,2,1,0],
+            [0,1,2,3,2,1,1,2,3,2,1,0],
+            [0,0,1,2,2,4,4,2,2,1,0,0],
+            [0,0,1,1,2,2,2,2,1,1,0,0],
+            [0,1,2,1,1,1,1,1,1,2,1,0],
+            [1,2,1,0,1,0,0,1,0,1,2,1],
+            [1,1,0,0,0,1,1,0,0,0,1,1],
+            [1,0,0,0,0,0,0,0,0,0,0,1],
+            [0,0,0,0,0,0,0,0,0,0,0,0]
+        ];
+
+        function drawPixelArt(matrix, palette, cx, cy, pixelSize) {
+            const rows = matrix.length;
+            const cols = matrix[0].length;
+            const startX = cx - (cols * pixelSize) / 2;
+            const startY = cy - (rows * pixelSize) / 2;
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const colorId = matrix[r][c];
+                    if (colorId && palette[colorId]) {
+                        ctx.fillStyle = palette[colorId];
+                        ctx.fillRect(startX + c * pixelSize, startY + r * pixelSize, pixelSize, pixelSize);
+                    }
+                }
+            }
+        }
+
+        function emitThrusterParticles(px, py, vx) {
+            const offsets = [-15, 15];
+            offsets.forEach(offX => {
+                thrusterParticles.push({
+                    x: px + offX + (Math.random() - 0.5) * 4,
+                    y: py + 24,
+                    vx: -vx * 0.15 + (Math.random() - 0.5) * 1.5,
+                    vy: 3.5 + Math.random() * 3.5,
+                    size: 3 + Math.random() * 3,
+                    alpha: 1.0,
+                    decay: 0.04 + Math.random() * 0.03,
+                    color: Math.random() < 0.6 ? '#00f7ff' : '#ff9900'
+                });
+            });
+        }
+
+        function spawnExplosion(x, y) {
+            screenShake = 7;
+            for (let i = 0; i < 28; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 1.5 + Math.random() * 5.0;
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed,
+                    size: 2 + Math.random() * 5,
+                    color: ['#ff0055', '#ff9900', '#ffff00', '#ffffff'][Math.floor(Math.random() * 4)],
+                    alpha: 1.0,
+                    decay: 0.02 + Math.random() * 0.03
+                });
+            }
+
+            if (Math.random() < 0.25) {
+                const type = Math.random() < 0.7 ? 'TRIPLE' : 'HEAL';
+                powerups.push({ x: x, y: y, vy: 1.8, type: type });
+            }
+        }
+
+        const keys = {};
+        let wasm = null;
+        let memory = null;
+        let audioCtx = null;
+        let blinkTimer = 0;
+
+        function getAudioContext() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            return audioCtx;
+        }
+
+        function playLaserSound() {
+            try {
+                const actx = getAudioContext();
+                const osc = actx.createOscillator();
+                const gain = actx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(880, actx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(110, actx.currentTime + 0.12);
+                gain.gain.setValueAtTime(0.12, actx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, actx.currentTime + 0.12);
+                osc.connect(gain);
+                gain.connect(actx.destination);
+                osc.start();
+                osc.stop(actx.currentTime + 0.12);
+            } catch (e) {}
+        }
+
+        function playExplosionSound() {
+            try {
+                const actx = getAudioContext();
+                const osc = actx.createOscillator();
+                const gain = actx.createGain();
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(170, actx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(30, actx.currentTime + 0.26);
+                gain.gain.setValueAtTime(0.35, actx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, actx.currentTime + 0.26);
+                osc.connect(gain);
+                gain.connect(actx.destination);
+                osc.start();
+                osc.stop(actx.currentTime + 0.26);
+            } catch (e) {}
+        }
+
+        function playPowerupSound() {
+            try {
+                const actx = getAudioContext();
+                const notes = [440, 554.3, 659.2, 880];
+                notes.forEach((freq, idx) => {
+                    const osc = actx.createOscillator();
+                    const gain = actx.createGain();
+                    const st = actx.currentTime + idx * 0.05;
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(freq, st);
+                    gain.gain.setValueAtTime(0.12, st);
+                    gain.gain.exponentialRampToValueAtTime(0.001, st + 0.08);
+                    osc.connect(gain);
+                    gain.connect(actx.destination);
+                    osc.start(st);
+                    osc.stop(st + 0.08);
+                });
+            } catch (e) {}
+        }
+
+        function playStartJingle() {
+            try {
+                const actx = getAudioContext();
+                const notes = [261.6, 329.6, 392.0, 523.2];
+                notes.forEach((freq, idx) => {
+                    const osc = actx.createOscillator();
+                    const gain = actx.createGain();
+                    const st = actx.currentTime + idx * 0.08;
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(freq, st);
+                    gain.gain.setValueAtTime(0.1, st);
+                    gain.gain.exponentialRampToValueAtTime(0.001, st + 0.12);
+                    osc.connect(gain);
+                    gain.connect(actx.destination);
+                    osc.start(st);
+                    osc.stop(st + 0.12);
+                });
+            } catch (e) {}
+        }
+
+        const starLayers = [
+            Array.from({ length: 35 }, () => ({ x: Math.random() * 600, y: Math.random() * 700, speed: 0.3, size: 1.0, color: '#475569' })),
+            Array.from({ length: 30 }, () => ({ x: Math.random() * 600, y: Math.random() * 700, speed: 0.8, size: 1.5, color: '#94a3b8' })),
+            Array.from({ length: 15 }, () => ({ x: Math.random() * 600, y: Math.random() * 700, speed: 2.2, size: 2.5, color: '#ffffff' }))
+        ];
+
+        window.addEventListener('keydown', e => {
+            keys[e.code] = true;
+
+            if (currentState === STATE.TITLE) {
+                if (e.code === 'Space' || e.code === 'Enter') {
+                    getAudioContext();
+                    playStartJingle();
+                    if (wasm) wasm.init_game();
+                    particles = [];
+                    thrusterParticles = [];
+                    hitFlashes = [];
+                    powerups = [];
+                    floatingTexts = [];
+                    currentState = STATE.PLAYING;
+                    e.preventDefault();
+                }
+                return;
+            }
+
+            if (currentState === STATE.PLAYING && e.code === 'Space') {
+                if (wasm && !wasm.is_game_over()) {
+                    wasm.shoot();
+                    playLaserSound();
+                }
+                e.preventDefault();
+            }
+
+            if (currentState === STATE.GAMEOVER && (e.code === 'Enter' || e.code === 'Space')) {
+                playStartJingle();
+                if (wasm) wasm.init_game();
+                particles = [];
+                thrusterParticles = [];
+                hitFlashes = [];
+                powerups = [];
+                floatingTexts = [];
+                currentState = STATE.PLAYING;
+                e.preventDefault();
+            }
+        });
+
+        window.addEventListener('keyup', e => {
+            keys[e.code] = false;
+        });
+
+        async function init() {
+            try {
+                const response = await fetch('game.wasm');
+                const { instance } = await WebAssembly.instantiateStreaming(response);
+                wasm = instance.exports;
+                memory = wasm.memory;
+
+                wasm.init_game();
+                requestAnimationFrame(gameLoop);
+            } catch (err) {
+                console.error("Falha ao carregar WebAssembly:", err);
+            }
+        }
+
+        function gameLoop() {
+            blinkTimer++;
+
+            starLayers.forEach(layer => {
+                layer.forEach(s => {
+                    s.y += s.speed;
+                    if (s.y > canvas.height) {
+                        s.y = 0;
+                        s.x = Math.random() * canvas.width;
+                    }
+                });
+            });
+
+            if (currentState === STATE.TITLE) {
+                renderTitleScreen();
+            } else if (currentState === STATE.PLAYING) {
+                if (keys['ArrowLeft'] || keys['KeyA']) wasm.apply_player_thrust(-1.0);
+                if (keys['ArrowRight'] || keys['KeyD']) wasm.apply_player_thrust(1.0);
+
+                wasm.update_game();
+
+                if (wasm.check_enemy_hit && wasm.check_enemy_hit() === 1) {
+                    const hitX = wasm.get_last_hit_x();
+                    const hitY = wasm.get_last_hit_y();
+                    hitFlashes.push({ x: hitX, y: hitY, frames: 3 });
+                    spawnExplosion(hitX, hitY);
+                    playExplosionSound();
+                    floatingTexts.push({ x: hitX, y: hitY, text: '+100', alpha: 1.0, color: '#ffff00' });
+                }
+
+                if (wasm.is_game_over() === 1) {
+                    currentState = STATE.GAMEOVER;
+                    const finalScore = wasm.get_score();
+                    if (finalScore > highScore) {
+                        highScore = finalScore;
+                        localStorage.setItem('earth_defender_highscore', highScore);
+                    }
+                }
+
+                renderGameScreen();
+            } else if (currentState === STATE.GAMEOVER) {
+                renderGameOverScreen();
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function drawBackgroundStars() {
+            starLayers.forEach(layer => {
+                layer.forEach(s => {
+                    ctx.fillStyle = s.color;
+                    ctx.fillRect(s.x, s.y, s.size, s.size);
+                });
+            });
+        }
+
+        // ================= TELA DE APRESENTAÇÃO =================
+        function renderTitleScreen() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawBackgroundStars();
+
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 36px "Segoe UI", sans-serif';
+            ctx.shadowBlur = 18;
+            ctx.shadowColor = '#00f7ff';
+            ctx.fillStyle = '#00f7ff';
+            ctx.fillText("DEFENSOR DA TERRA", canvas.width / 2, 95);
+            ctx.shadowBlur = 0;
+
+            ctx.font = '13px monospace';
+            ctx.fillStyle = '#38bdf8';
+            ctx.fillText("ARCADE POLISHED • INÉRCIA • HIT FLASH • 60 FPS", canvas.width / 2, 125);
+
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
+            ctx.strokeStyle = '#1e293b';
+            ctx.lineWidth = 2;
+            ctx.fillRect(40, 150, 520, 440);
+            ctx.strokeRect(40, 150, 520, 440);
+
+            ctx.font = 'bold 15px monospace';
+            ctx.fillStyle = '#f59e0b';
+            ctx.fillText("— NOVOS RECURSOS TÁTICOS —", canvas.width / 2, 185);
+
+            ctx.fillStyle = '#eab308';
+            ctx.fillRect(90, 215, 34, 34);
+            ctx.font = 'bold 16px monospace';
+            ctx.fillStyle = '#000';
+            ctx.fillText("3X", 107, 238);
+
+            ctx.textAlign = 'left';
+            ctx.font = 'bold 14px monospace';
+            ctx.fillStyle = '#facc15';
+            ctx.fillText("DISPARO TRIPLO (10 Segundos)", 140, 230);
+            ctx.font = '12px sans-serif';
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillText("Rajadas de 3 projéteis com propagação lateral.", 140, 248);
+
+            ctx.fillStyle = '#10b981';
+            ctx.fillRect(90, 275, 34, 34);
+            ctx.font = 'bold 22px monospace';
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.fillText("+", 107, 300);
+
+            ctx.textAlign = 'left';
+            ctx.font = 'bold 14px monospace';
+            ctx.fillStyle = '#34d399';
+            ctx.fillText("REPARO DE ESCUDO (+1 VIDA)", 140, 290);
+            ctx.font = '12px sans-serif';
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillText("Recupera instantaneamente um escudo danificado.", 140, 308);
+
+            ctx.strokeStyle = '#334155';
+            ctx.beginPath();
+            ctx.moveTo(70, 335);
+            ctx.lineTo(530, 335);
+            ctx.stroke();
+
+            drawPixelArt(ENEMY_SPRITE, E_PALETTE, 110, 375, 3.2);
+            ctx.textAlign = 'left';
+            ctx.font = 'bold 14px monospace';
+            ctx.fillStyle = '#ff0055';
+            ctx.fillText("INVASORES COM HIT FLASH", 140, 372);
+            ctx.font = '12px sans-serif';
+            ctx.fillStyle = '#94a3b8';
+            ctx.fillText("Física com inércia real e rastro de propulsores.", 140, 390);
+
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 14px monospace';
+            ctx.fillStyle = '#38bdf8';
+            ctx.fillText("CONTROLES: [A / D] ou [← / →] Acelerar   [ESPAÇO] Disparar", canvas.width / 2, 450);
+
+            ctx.font = '14px monospace';
+            ctx.fillStyle = '#a855f7';
+            ctx.fillText(`RECORDE ATUAL: ${highScore} PONTOS`, canvas.width / 2, 500);
+
+            if (Math.floor(blinkTimer / 30) % 2 === 0) {
+                ctx.font = 'bold 17px monospace';
+                ctx.fillStyle = '#00f7ff';
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = '#00f7ff';
+                ctx.fillText("PRESSIONE [ESPAÇO] OU [ENTER] PARA DECOLAR", canvas.width / 2, 630);
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        // ================= TELA DE GAMEPLAY =================
+        function renderGameScreen() {
+            ctx.save();
+
+            if (screenShake > 0) {
+                const shakeX = (Math.random() - 0.5) * screenShake;
+                const shakeY = (Math.random() - 0.5) * screenShake;
+                ctx.translate(shakeX, shakeY);
+                screenShake *= 0.88;
+                if (screenShake < 0.5) screenShake = 0;
+            }
+
+            ctx.clearRect(-10, -10, canvas.width + 20, canvas.height + 20);
+            drawBackgroundStars();
+
+            // Posição com fallback de segurança se ainda não inicializado
+            const playerX = (wasm && wasm.get_player_x) ? wasm.get_player_x() : 300;
+            const playerVx = (wasm && wasm.get_player_vx) ? wasm.get_player_vx() : 0;
+            const playerY = canvas.height - 55;
+            const lives = wasm ? wasm.get_player_lives() : 5;
+            const score = wasm ? wasm.get_score() : 0;
+            const tripleTimer = wasm ? wasm.get_triple_shot_timer() : 0;
+
+            // 1. Rastro de propulsão
+            emitThrusterParticles(playerX, playerY, playerVx);
+            for (let i = thrusterParticles.length - 1; i >= 0; i--) {
+                const tp = thrusterParticles[i];
+                tp.x += tp.vx;
+                tp.y += tp.vy;
+                tp.alpha -= tp.decay;
+
+                if (tp.alpha <= 0) {
+                    thrusterParticles.splice(i, 1);
+                    continue;
+                }
+
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, tp.alpha);
+                ctx.fillStyle = tp.color;
+                ctx.fillRect(tp.x, tp.y, tp.size, tp.size);
+                ctx.restore();
+            }
+
+            // 2. Projéteis de plasma (struct Bullet: 16 bytes: float x, y, vx; int active)
+            const bulletsPtr = wasm.get_bullets_ptr();
+            const bulletsView = new DataView(memory.buffer, bulletsPtr, 45 * 16);
+            ctx.fillStyle = tripleTimer > 0 ? '#facc15' : '#00f7ff';
+            ctx.shadowBlur = 12;
+            ctx.shadowColor = tripleTimer > 0 ? '#facc15' : '#00f7ff';
+            for (let i = 0; i < 45; i++) {
+                const offset = i * 16;
+                const bx = bulletsView.getFloat32(offset, true);
+                const by = bulletsView.getFloat32(offset + 4, true);
+                const active = bulletsView.getInt32(offset + 12, true);
+
+                if (active === 1) {
+                    ctx.fillRect(bx - 3, by, 6, 18);
+                }
+            }
+            ctx.shadowBlur = 0;
+
+            // 3. Naves Inimigas (struct Enemy alinhada: 16 bytes: float x, y, speed_y; int active)
+            const enemiesPtr = wasm.get_enemies_ptr();
+            const enemiesView = new DataView(memory.buffer, enemiesPtr, 20 * 16);
+            for (let i = 0; i < 20; i++) {
+                const offset = i * 16;
+                const ex = enemiesView.getFloat32(offset, true);
+                const ey = enemiesView.getFloat32(offset + 4, true);
+                const active = enemiesView.getInt32(offset + 12, true);
+
+                if (active === 1) {
+                    drawPixelArt(ENEMY_SPRITE, E_PALETTE, ex, ey, 5);
+                }
+            }
+
+            // 4. Hit Flash
+            for (let i = hitFlashes.length - 1; i >= 0; i--) {
+                const hf = hitFlashes[i];
+                drawPixelArt(ENEMY_SPRITE, WHITE_PALETTE, hf.x, hf.y, 5);
+                hf.frames--;
+                if (hf.frames <= 0) hitFlashes.splice(i, 1);
+            }
+
+            // 5. Itens e Power-ups
+            for (let i = powerups.length - 1; i >= 0; i--) {
+                const p = powerups[i];
+                p.y += p.vy;
+
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                if (p.type === 'TRIPLE') {
+                    ctx.fillStyle = '#facc15';
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = '#facc15';
+                    ctx.fillRect(-14, -14, 28, 28);
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = '#000';
+                    ctx.font = 'bold 13px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('3X', 0, 5);
+                } else {
+                    ctx.fillStyle = '#10b981';
+                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = '#10b981';
+                    ctx.fillRect(-14, -14, 28, 28);
+                    ctx.shadowBlur = 0;
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 18px monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('+', 0, 6);
+                }
+                ctx.restore();
+
+                const distPlayer = Math.hypot(p.x - playerX, p.y - playerY);
+                if (distPlayer < 38) {
+                    playPowerupSound();
+                    if (p.type === 'TRIPLE') {
+                        wasm.activate_triple_shot(600);
+                        floatingTexts.push({ x: playerX, y: playerY - 30, text: 'TIRO TRIPLO!', alpha: 1.0, color: '#facc15' });
+                    } else {
+                        wasm.heal_player();
+                        floatingTexts.push({ x: playerX, y: playerY - 30, text: '+1 ESCUDO!', alpha: 1.0, color: '#34d399' });
+                    }
+                    powerups.splice(i, 1);
+                    continue;
+                }
+
+                if (p.y > canvas.height + 30) {
+                    powerups.splice(i, 1);
+                }
+            }
+
+            // 6. Nave do Jogador com Banking
+            ctx.save();
+            ctx.translate(playerX, playerY);
+            const tiltAngle = (playerVx / 9.5) * 0.25;
+            ctx.rotate(tiltAngle);
+            drawPixelArt(PLAYER_SPRITE, P_PALETTE, 0, 0, 5);
+
+            if (tripleTimer > 0) {
+                ctx.strokeStyle = '#facc15';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(0, 0, 36, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            ctx.restore();
+
+            // 7. Partículas de Explosão
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const pt = particles[i];
+                pt.x += pt.vx;
+                pt.y += pt.vy;
+                pt.alpha -= pt.decay;
+
+                if (pt.alpha <= 0) {
+                    particles.splice(i, 1);
+                    continue;
+                }
+
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, pt.alpha);
+                ctx.fillStyle = pt.color;
+                ctx.fillRect(pt.x, pt.y, pt.size, pt.size);
+                ctx.restore();
+            }
+
+            // 8. Textos Flutuantes
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                const ft = floatingTexts[i];
+                ft.y -= 1.2;
+                ft.alpha -= 0.025;
+
+                if (ft.alpha <= 0) {
+                    floatingTexts.splice(i, 1);
+                    continue;
+                }
+
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, ft.alpha);
+                ctx.font = 'bold 15px monospace';
+                ctx.fillStyle = ft.color;
+                ctx.textAlign = 'center';
+                ctx.fillText(ft.text, ft.x, ft.y);
+                ctx.restore();
+            }
+
+            // 9. HUD Superior
+            ctx.font = 'bold 15px monospace';
+            ctx.fillStyle = '#38bdf8';
+            ctx.textAlign = 'left';
+            ctx.fillText(`PONTOS: ${score}`, 20, 30);
+
+            if (tripleTimer > 0) {
+                const secRemaining = Math.ceil(tripleTimer / 60);
+                ctx.fillStyle = '#facc15';
+                ctx.textAlign = 'center';
+                ctx.fillText(`⚡ TRIPLO: ${secRemaining}s`, canvas.width / 2, 30);
+            } else {
+                ctx.fillStyle = '#a855f7';
+                ctx.textAlign = 'center';
+                ctx.fillText(`RECORDE: ${highScore}`, canvas.width / 2, 30);
+            }
+
+            ctx.fillStyle = '#ff4d6d';
+            ctx.textAlign = 'right';
+            ctx.fillText(`ESCUDOS: ${'❤ '.repeat(Math.max(0, lives))}`, canvas.width - 20, 30);
+
+            ctx.restore();
+        }
+
+        // ================= TELA DE GAME OVER =================
+        function renderGameOverScreen() {
+            ctx.fillStyle = 'rgba(5, 7, 15, 0.85)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const score = wasm.get_score();
+
+            ctx.textAlign = 'center';
+            ctx.font = 'bold 38px sans-serif';
+            ctx.fillStyle = '#ff0055';
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = '#ff0055';
+            ctx.fillText('TERRA INVADIDA!', canvas.width / 2, canvas.height / 2 - 50);
+            ctx.shadowBlur = 0;
+
+            ctx.font = '20px monospace';
+            ctx.fillStyle = '#ffffff';
+            ctx.fillText(`PONTUAÇÃO: ${score}`, canvas.width / 2, canvas.height / 2 + 5);
+
+            if (score >= highScore && score > 0) {
+                ctx.font = 'bold 16px monospace';
+                ctx.fillStyle = '#f59e0b';
+                ctx.fillText('★ NOVO RECORDE HISTÓRICO! ★', canvas.width / 2, canvas.height / 2 + 38);
+            }
+
+            if (Math.floor(blinkTimer / 30) % 2 === 0) {
+                ctx.font = 'bold 16px monospace';
+                ctx.fillStyle = '#00f7ff';
+                ctx.fillText('PRESSIONE [ENTER] OU [ESPAÇO] PARA JOGAR', canvas.width / 2, canvas.height / 2 + 90);
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
